@@ -1,0 +1,6 @@
+{
+  "name": "AI Personality Analyzer",
+  "description": "Get an illustrative Big Five personality profile by analyzing a short video of facial expressions or by providing a self-descriptive text. This tool uses advanced AI for its analysis.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
