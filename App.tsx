@@ -3,6 +3,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { VideoUploader } from './components/VideoUploader';
 import { TextAnalyzer } from './components/TextAnalyzer';
 import { BigFiveResultsChart } from './components/BigFiveResultsChart';
+import { ApiKeyInput } from './components/ApiKeyInput';
 import { Spinner } from './components/Spinner';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { useFaceProcessor } from './hooks/useFaceProcessor';
@@ -10,7 +11,32 @@ import { useTextAnalyzer } from './hooks/useTextAnalyzer';
 import { LanguageProvider, useTranslation } from './i18n/LanguageContext';
 import type { BigFiveProfile, AppState, AnalysisMode } from './types';
 import { AppStateStatus } from './types';
-import { initializeEmotionModel } from './services/emotionService'; // For pre-loading
+import { initializeEmotionModel } from './services/emotionService';
+
+// Runtime API key detection
+const getApiKey = (): string | null => {
+  // Try different possible sources
+  const sources = [
+    // Environment variables that might be available at runtime
+    (globalThis as any).process?.env?.GEMINI_API_KEY,
+    (globalThis as any).process?.env?.API_KEY,
+    (globalThis as any).process?.env?.VITE_GEMINI_API_KEY,
+    (globalThis as any).process?.env?.VITE_API_KEY,
+    // Try to get from window (injected by server)
+    (globalThis as any).window?.GEMINI_API_KEY,
+    (globalThis as any).window?.API_KEY,
+    // Try localStorage (user provided)
+    (typeof localStorage !== 'undefined') ? localStorage.getItem('gemini_api_key') : null,
+    (typeof localStorage !== 'undefined') ? localStorage.getItem('api_key') : null,
+  ];
+
+  for (const source of sources) {
+    if (source && typeof source === 'string' && source.trim().length > 0) {
+      return source.trim();
+    }
+  }
+  return null;
+};
 
 const AppContent: React.FC = () => {
   const { t, language } = useTranslation();
@@ -24,13 +50,33 @@ const AppContent: React.FC = () => {
   const [overallPersonality, setOverallPersonality] = useState<BigFiveProfile | null>(null);
   
   // API Key state
-  const [apiKeyExists, setApiKeyExists] = useState<boolean>(false);
-  const [currentApiKey, setCurrentApiKey] = useState<string | undefined>(undefined);
+  const [currentApiKey, setCurrentApiKey] = useState<string | null>(null);
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
 
   // Hooks for analysis
   const { analyzeVideo, isLoading: isVideoProcessing, error: videoError, progressMessage: videoProgress } = useFaceProcessor(currentApiKey, language);
   const { analyzeText, isLoading: isTextProcessing, error: textError, progressMessage: textProgress } = useTextAnalyzer(currentApiKey, language);
 
+  // Check for API key on mount and when localStorage changes
+  useEffect(() => {
+    const checkApiKey = () => {
+      const key = getApiKey();
+      setCurrentApiKey(key);
+      setShowApiKeyInput(!key);
+    };
+
+    checkApiKey();
+
+    // Listen for storage events (when user sets API key in another tab)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'gemini_api_key' || e.key === 'api_key') {
+        checkApiKey();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   // Initial model loading
   useEffect(() => {
@@ -46,17 +92,7 @@ const AppContent: React.FC = () => {
   }, [appState.status, t]);
 
   useEffect(() => {
-    // Check for API Key
-    const keyFromEnv = typeof process !== 'undefined' && process.env && process.env.API_KEY ? process.env.API_KEY : undefined;
-    if (keyFromEnv) {
-      setApiKeyExists(true);
-      setCurrentApiKey(keyFromEnv);
-    } else {
-      setApiKeyExists(false);
-      setCurrentApiKey(undefined);
-    }
-
-    if(analysisMode === 'video'){
+    if (analysisMode === 'video') {
       initializeEmotionModel()
         .then(() => {
           setAppState(prev => prev.status === AppStateStatus.Initializing ? 
@@ -72,8 +108,16 @@ const AppContent: React.FC = () => {
     }
   }, [analysisMode]);
 
+  const handleApiKeySave = (apiKey: string) => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('gemini_api_key', apiKey);
+    }
+    setCurrentApiKey(apiKey);
+    setShowApiKeyInput(false);
+  };
+
   const handleVideoAnalysis = useCallback(async (file: File) => {
-    if (!file || !apiKeyExists || !currentApiKey) {
+    if (!file || !currentApiKey) {
         setAppState({ status: AppStateStatus.Error, message: 'error.apiKeyMissing' });
         return;
     }
@@ -95,10 +139,10 @@ const AppContent: React.FC = () => {
       const errorMessageKey = err instanceof Error ? err.message : 'error.unknown';
       setAppState({ status: AppStateStatus.Error, message: errorMessageKey });
     }
-  }, [analyzeVideo, apiKeyExists, currentApiKey, videoUrl]);
+  }, [analyzeVideo, currentApiKey, videoUrl]);
 
   const handleTextAnalysis = useCallback(async (text: string) => {
-      if (!text || !apiKeyExists || !currentApiKey) {
+      if (!text || !currentApiKey) {
         setAppState({ status: AppStateStatus.Error, message: 'error.apiKeyMissing' });
         return;
       }
@@ -117,8 +161,7 @@ const AppContent: React.FC = () => {
         const errorMessageKey = err instanceof Error ? err.message : 'error.unknown';
         setAppState({ status: AppStateStatus.Error, message: errorMessageKey });
       }
-  }, [analyzeText, apiKeyExists, currentApiKey]);
-
+  }, [analyzeText, currentApiKey]);
 
   const resetApp = () => {
     setAppState({ status: AppStateStatus.Idle, message: 'status.ready' });
@@ -145,7 +188,6 @@ const AppContent: React.FC = () => {
   const isLoading = isVideoProcessing || isTextProcessing;
   const progressMessage = analysisMode === 'video' ? videoProgress : textProgress;
 
-
   const TabButton: React.FC<{mode: AnalysisMode; label: string}> = ({ mode, label }) => (
     <button
       onClick={() => {
@@ -170,8 +212,16 @@ const AppContent: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-gray-800 text-gray-100 p-4 sm:p-8 flex flex-col items-center">
       <header className="w-full max-w-5xl mb-8 text-center">
-        <div className="flex justify-center items-center mb-4">
+        <div className="flex justify-between items-center mb-4">
+            <div className="w-32"></div> {/* Spacer */}
             <LanguageSwitcher />
+            <button
+              onClick={() => setShowApiKeyInput(!showApiKeyInput)}
+              className="text-sm bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-md transition-colors"
+              title={currentApiKey ? 'Change API Key' : 'Set API Key'}
+            >
+              {currentApiKey ? '🔑 ✓' : '🔑 Set'}
+            </button>
         </div>
         <h1 className="text-4xl sm:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-500 to-red-500">
           {t('appTitle')}
@@ -182,6 +232,12 @@ const AppContent: React.FC = () => {
       </header>
 
       <main className="w-full max-w-5xl bg-gray-800 shadow-2xl rounded-lg p-6 sm:p-8">
+        {showApiKeyInput && (
+          <div className="mb-6">
+            <ApiKeyInput onSave={handleApiKeySave} onCancel={() => setShowApiKeyInput(false)} currentKey={currentApiKey} />
+          </div>
+        )}
+
         {(appState.status === AppStateStatus.Initializing || appState.status === AppStateStatus.Processing || isLoading) && (
            <div className="text-center py-10">
             <Spinner />
@@ -192,9 +248,17 @@ const AppContent: React.FC = () => {
         {appState.status === AppStateStatus.Error && (
           <div className="text-center py-10">
             <p className="text-xl text-red-400">{t('error.title')}: {t(appState.message as any)}</p>
+            {appState.message === 'error.apiKeyMissing' && (
+              <button
+                onClick={() => setShowApiKeyInput(true)}
+                className="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg transition duration-150 mr-2"
+              >
+                {t('button.setApiKey')}
+              </button>
+            )}
             <button
               onClick={resetApp}
-              className="mt-6 bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-6 rounded-lg transition duration-150"
+              className="mt-4 bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-6 rounded-lg transition duration-150"
             >
               {t('button.tryAgain')}
             </button>
@@ -208,14 +272,20 @@ const AppContent: React.FC = () => {
               <TabButton mode="text" label={t('tab.text')} />
             </div>
 
-            {!apiKeyExists && (
+            {!currentApiKey && (
               <div className="p-4 mb-4 text-sm text-yellow-300 bg-yellow-800/50 rounded-lg text-center" role="alert">
                 {t('warning.apiKeyMissing')}
+                <button
+                  onClick={() => setShowApiKeyInput(true)}
+                  className="ml-2 underline hover:no-underline"
+                >
+                  {t('button.setApiKey')}
+                </button>
               </div>
             )}
             
-            {analysisMode === 'video' && <VideoUploader onVideoUploaded={handleVideoAnalysis} disabled={!apiKeyExists}/>}
-            {analysisMode === 'text' && <TextAnalyzer onAnalyze={handleTextAnalysis} disabled={!apiKeyExists}/>}
+            {analysisMode === 'video' && <VideoUploader onVideoUploaded={handleVideoAnalysis} disabled={!currentApiKey}/>}
+            {analysisMode === 'text' && <TextAnalyzer onAnalyze={handleTextAnalysis} disabled={!currentApiKey}/>}
           </>
         )}
         
