@@ -16,10 +16,29 @@
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.7.4/dist/tf.min.js" crossorigin="anonymous"></script>
   <!-- face-api.js -->
   <script src="https://cdn.jsdelivr.net/npm/face-api.js@latest/dist/face-api.min.js" crossorigin="anonymous"></script>
-  <!-- AI Service SDK -->
+  <!-- Gemini AI Service SDK -->
   <script type="module">
-    import { GoogleGenAI } from "https://esm.run/@google/genai";
-    window.AIProvider = GoogleGenAI; // Make it globally available for services
+    import { GoogleGenerativeAI } from "https://esm.run/@google/generative-ai";
+    window.AIProvider = GoogleGenerativeAI; // Make it globally available for services
+    
+    // Try to inject API key from environment if available
+    // This script runs at page load and tries multiple sources
+    const possibleApiKeys = [
+      // Build-time injected values (will be replaced by Vite if available)
+      '%VITE_GEMINI_API_KEY%',
+      '%VITE_API_KEY%',
+      // Server-side injected (for platforms like Railway/Netlify)
+      window.GEMINI_API_KEY,
+      window.API_KEY,
+      // Environment variables that might be accessible at runtime
+      (typeof process !== 'undefined' && process.env) ? process.env.GEMINI_API_KEY : null,
+      (typeof process !== 'undefined' && process.env) ? process.env.API_KEY : null
+    ].filter(key => key && key !== '%VITE_GEMINI_API_KEY%' && key !== '%VITE_API_KEY%' && key.trim().length > 0);
+    
+    if (possibleApiKeys.length > 0) {
+      window.INJECTED_API_KEY = possibleApiKeys[0];
+      console.log('API key detected from environment');
+    }
   </script>
 
 <script type="importmap">
@@ -59,6 +78,21 @@
 </head>
 <body class="bg-gray-900 text-white">
   <div id="models-loading-status" style="display: none;">Loading AI models...</div>
+  <!-- Server-side API key injection point (for Railway/Netlify) -->
+  <script>
+    // This allows server-side injection of API keys
+    // Platforms can inject: window.SERVER_API_KEY = 'actual-key';
+    if (typeof SERVER_API_KEY !== 'undefined' && SERVER_API_KEY) {
+      window.INJECTED_API_KEY = SERVER_API_KEY;
+    }
+    // For Railway/Netlify environment variable injection
+    if (typeof RAILWAY_GEMINI_API_KEY !== 'undefined' && RAILWAY_GEMINI_API_KEY) {
+      window.INJECTED_API_KEY = RAILWAY_GEMINI_API_KEY;
+    }
+    if (typeof NETLIFY_GEMINI_API_KEY !== 'undefined' && NETLIFY_GEMINI_API_KEY) {
+      window.INJECTED_API_KEY = NETLIFY_GEMINI_API_KEY;
+    }
+  </script>
   <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>
