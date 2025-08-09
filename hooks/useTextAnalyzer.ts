@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { getBigFiveProfileFromText } from '../services/geminiService';
 import type { BigFiveProfile, Language } from '../types';
 
-export const useTextAnalyzer = (apiKey?: string, language: Language = 'en') => {
+export const useTextAnalyzer = (apiKey: string | null, language: Language = 'en') => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progressMessage, setProgressMessage] = useState('');
