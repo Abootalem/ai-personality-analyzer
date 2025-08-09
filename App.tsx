@@ -15,23 +15,38 @@ import { initializeEmotionModel } from './services/emotionService';
 
 // Runtime API key detection
 const getApiKey = (): string | null => {
-  // Try different possible sources
+  // Try different possible sources in order of preference
   const sources = [
-    // Environment variables that might be available at runtime
+    // User provided keys (highest priority)
+    (typeof localStorage !== 'undefined') ? localStorage.getItem('gemini_api_key') : null,
+    (typeof localStorage !== 'undefined') ? localStorage.getItem('api_key') : null,
+    
+    // Server/build-time injected keys
+    (globalThis as any).window?.INJECTED_API_KEY,
+    (globalThis as any).window?.SERVER_API_KEY,
+    (globalThis as any).window?.GEMINI_API_KEY,
+    (globalThis as any).window?.API_KEY,
+    
+    // Railway/Netlify specific injections
+    (globalThis as any).window?.RAILWAY_GEMINI_API_KEY,
+    (globalThis as any).window?.NETLIFY_GEMINI_API_KEY,
+    
+    // Build-time environment variables (may not work in production)
     (globalThis as any).process?.env?.GEMINI_API_KEY,
     (globalThis as any).process?.env?.API_KEY,
     (globalThis as any).process?.env?.VITE_GEMINI_API_KEY,
     (globalThis as any).process?.env?.VITE_API_KEY,
-    // Try to get from window (injected by server)
-    (globalThis as any).window?.GEMINI_API_KEY,
-    (globalThis as any).window?.API_KEY,
-    // Try localStorage (user provided)
-    (typeof localStorage !== 'undefined') ? localStorage.getItem('gemini_api_key') : null,
-    (typeof localStorage !== 'undefined') ? localStorage.getItem('api_key') : null,
+    
+    // Global runtime variables
+    (globalThis as any).RUNTIME_API_KEY,
+    (globalThis as any).GEMINI_API_KEY,
+    (globalThis as any).API_KEY,
   ];
 
   for (const source of sources) {
-    if (source && typeof source === 'string' && source.trim().length > 0) {
+    if (source && typeof source === 'string' && source.trim().length > 0 && 
+        !source.startsWith('%') && !source.includes('undefined')) {
+      console.log('API key found from source');
       return source.trim();
     }
   }
