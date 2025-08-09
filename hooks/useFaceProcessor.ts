@@ -7,7 +7,7 @@ const MAX_VIDEO_DURATION_S = 15;
 const FRAMES_PER_SECOND = 2;
 const FRAMES_FOR_DESCRIPTION_ANALYSIS = 5;
 
-export const useFaceProcessor = (apiKey?: string, language: Language = 'en') => {
+export const useFaceProcessor = (apiKey: string | null, language: Language = 'en') => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progressMessage, setProgressMessage] = useState('');
@@ -106,8 +106,6 @@ export const useFaceProcessor = (apiKey?: string, language: Language = 'en') => 
 
     for (let i = 0; i < frameDataUrls.length; i++) {
         const dataUrl = frameDataUrls[i];
-        // Note: Progress message keys can't easily be translated here without passing t() down.
-        // The component can show a generic "processing" message and this can be for console.
         setProgressMessage(`progress.analyzingFrame`); // Generic key
         
         try {
@@ -160,6 +158,8 @@ export const useFaceProcessor = (apiKey?: string, language: Language = 'en') => 
         const errorKey = "error.apiKeyMissing";
         console.warn("AI service API key not provided. Skipping Big Five personality analysis.");
         setError(errorKey);
+        setIsLoading(false);
+        throw new Error(errorKey);
     }
 
     setProgressMessage('progress.complete');
