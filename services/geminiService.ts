@@ -1,19 +1,20 @@
 import { BigFiveTrait, Language } from '../types';
 import type { EmotionScores, BigFiveProfile } from '../types';
 
-const AIProvider = (window as any).AIProvider;
-let ai: any | null = null;
+// Runtime API key detection
+const getApiKeyFromWindow = (): any => {
+  return (globalThis as any).window?.AIProvider || (globalThis as any).AIProvider;
+};
 
 const initializeAIService = (apiKey: string) => {
-  if (!ai && apiKey) {
-    if (!AIProvider) {
-        throw new Error("AI Provider SDK not loaded. Ensure it's included in index.html.");
-    }
-    ai = new AIProvider({ apiKey });
-  } else if (!apiKey) {
+  const AIProvider = getApiKeyFromWindow();
+  if (!AIProvider) {
+    throw new Error("AI Provider SDK not loaded. Ensure it's included in index.html.");
+  }
+  if (!apiKey) {
     throw new Error("AI Service API key not provided for initialization.");
   }
-  return ai;
+  return new AIProvider({ apiKey });
 };
 
 const averageEmotionScores = (emotionProfiles: EmotionScores[]): EmotionScores => {
@@ -73,7 +74,7 @@ const getLocalizedDescriptionPrompt = (language: Language): string => {
 
 const getLocalizedTextAnalysisPrompt = (text: string, language: Language): string => {
     if (language === 'fa') {
-        return `شما یک دستیار هوش مصنوعی در نقش یک تحلیلگر روانشناс خبره هستید.
+        return `شما یک دستیار هوش مصنوعی در نقش یک تحلیلگر روانشناس خبره هستید.
 وظیفه شما ارائه یک پروفایل شخصیتی پنج بزرگ (پذیرا بودن، وظیفه‌شناسی، برون‌گرایی، سازگاری، روان‌رنجوری) بر اساس متن خود-توصیفی زیر است که توسط یک کاربر نوشته شده:
 متن کاربر: "${text}"
 
@@ -98,40 +99,46 @@ Each key's value must be an object with two sub-keys:
 Do not include any other text, remarks, or markdown formatting around the JSON object.`;
 };
 
-
 const parseAndValidateProfile = (jsonStr: string, defaultProfile: BigFiveProfile): BigFiveProfile => {
-    const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
-    const match = jsonStr.match(fenceRegex);
-    if (match && match[2]) {
-      jsonStr = match[2].trim();
-    }
-    const parsedResponse = JSON.parse(jsonStr) as Partial<BigFiveProfile>;
-    const validatedProfile: BigFiveProfile = { ...defaultProfile };
+    try {
+        // Remove any potential code fences
+        const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
+        const match = jsonStr.match(fenceRegex);
+        if (match && match[2]) {
+          jsonStr = match[2].trim();
+        }
+        
+        const parsedResponse = JSON.parse(jsonStr) as Partial<BigFiveProfile>;
+        const validatedProfile: BigFiveProfile = { ...defaultProfile };
 
-    const requiredTraits: BigFiveTrait[] = [
-        BigFiveTrait.Openness, BigFiveTrait.Conscientiousness, BigFiveTrait.Extraversion, 
-        BigFiveTrait.Agreeableness, BigFiveTrait.Neuroticism
-    ];
+        const requiredTraits: BigFiveTrait[] = [
+            BigFiveTrait.Openness, BigFiveTrait.Conscientiousness, BigFiveTrait.Extraversion, 
+            BigFiveTrait.Agreeableness, BigFiveTrait.Neuroticism
+        ];
 
-    for (const trait of requiredTraits) {
-      const traitData = parsedResponse[trait];
-      if (
-        traitData &&
-        typeof traitData.score === 'number' &&
-        traitData.score >= 0 &&
-        traitData.score <= 100 &&
-        typeof traitData.explanation === 'string' &&
-        traitData.explanation.trim() !== ''
-      ) {
-        validatedProfile[trait] = {
-            score: Math.round(traitData.score),
-            explanation: traitData.explanation
-        };
-      } else {
-        console.warn(`AI response for trait '${trait}' is invalid. Using default. Received:`, traitData);
-      }
+        for (const trait of requiredTraits) {
+          const traitData = parsedResponse[trait];
+          if (
+            traitData &&
+            typeof traitData.score === 'number' &&
+            traitData.score >= 0 &&
+            traitData.score <= 100 &&
+            typeof traitData.explanation === 'string' &&
+            traitData.explanation.trim() !== ''
+          ) {
+            validatedProfile[trait] = {
+                score: Math.round(traitData.score),
+                explanation: traitData.explanation
+            };
+          } else {
+            console.warn(`AI response for trait '${trait}' is invalid. Using default. Received:`, traitData);
+          }
+        }
+        return validatedProfile;
+    } catch (error) {
+        console.error('Error parsing AI response:', error, 'Response:', jsonStr);
+        return defaultProfile;
     }
-    return validatedProfile;
 }
 
 export const getBigFivePersonalityProfile = async (
@@ -140,13 +147,14 @@ export const getBigFivePersonalityProfile = async (
   language: Language = 'en'
 ): Promise<BigFiveProfile> => {
   if (!apiKey) throw new Error("error.apiKeyMissing");
-  initializeAIService(apiKey);
 
   const defaultExplanation = language === 'fa' 
     ? "توضیح دقیق در دسترس نیست." : "Detailed explanation unavailable.";
   const defaultProfile: BigFiveProfile = {
-    openness: { score: 50, explanation: defaultExplanation }, conscientiousness: { score: 50, explanation: defaultExplanation },
-    extraversion: { score: 50, explanation: defaultExplanation }, agreeableness: { score: 50, explanation: defaultExplanation },
+    openness: { score: 50, explanation: defaultExplanation }, 
+    conscientiousness: { score: 50, explanation: defaultExplanation },
+    extraversion: { score: 50, explanation: defaultExplanation }, 
+    agreeableness: { score: 50, explanation: defaultExplanation },
     neuroticism: { score: 50, explanation: defaultExplanation },
   };
 
@@ -159,15 +167,24 @@ export const getBigFivePersonalityProfile = async (
   const prompt = getLocalizedPersonalityPrompt(emotionDataString, language);
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: { responseMimeType: "application/json" }
+    const ai = initializeAIService(apiKey);
+    const model = ai.getGenerativeModel({ 
+      model: "gemini-2.0-flash-exp",
+      generationConfig: {
+        responseMimeType: "application/json"
+      }
     });
-    return parseAndValidateProfile(response.text.trim(), defaultProfile);
+    
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    return parseAndValidateProfile(response.text(), defaultProfile);
   } catch (error) {
     console.error("Error calling AI service (personality):", error);
-    if (error instanceof Error && error.message.includes("API key not valid")) throw new Error("error.invalidApiKey");
+    if (error instanceof Error) {
+      if (error.message.includes("API key not valid") || error.message.includes("API_KEY_INVALID")) {
+        throw new Error("error.invalidApiKey");
+      }
+    }
     return defaultProfile;
   }
 };
@@ -176,26 +193,36 @@ export const getVideoDescription = async (
     frameDataUrls: string[], apiKey: string, language: Language = 'en'
 ): Promise<string> => {
     if (!apiKey) throw new Error("error.apiKeyMissing");
-    initializeAIService(apiKey);
 
     if (frameDataUrls.length === 0) {
         return language === 'fa' ? "هیچ فریمی برای تحلیل ارائه نشده است." : "No frames provided for analysis.";
     }
     
-    const promptPart = { text: getLocalizedDescriptionPrompt(language) };
+    const promptText = getLocalizedDescriptionPrompt(language);
     const imageParts = frameDataUrls.map(dataUrl => ({
-        inlineData: { mimeType: 'image/jpeg', data: dataUrl.split(',')[1] }
+        inlineData: { 
+            mimeType: 'image/jpeg', 
+            data: dataUrl.split(',')[1] 
+        }
     }));
     
     try {
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: { parts: [promptPart, ...imageParts] },
-        });
-        return response.text.trim();
+        const ai = initializeAIService(apiKey);
+        const model = ai.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+        
+        const result = await model.generateContent([
+            promptText,
+            ...imageParts
+        ]);
+        const response = await result.response;
+        return response.text().trim();
     } catch (error) {
         console.error("Error calling AI service (description):", error);
-        if (error instanceof Error && error.message.includes("API key not valid")) throw new Error("error.invalidApiKey");
+        if (error instanceof Error) {
+            if (error.message.includes("API key not valid") || error.message.includes("API_KEY_INVALID")) {
+                throw new Error("error.invalidApiKey");
+            }
+        }
         return language === 'fa' ? "تولید توضیحات ویدیو با خطا مواجه شد." : "Could not generate video description.";
     }
 };
@@ -204,27 +231,37 @@ export const getBigFiveProfileFromText = async (
     text: string, apiKey: string, language: Language = 'en'
 ): Promise<BigFiveProfile> => {
   if (!apiKey) throw new Error("error.apiKeyMissing");
-  initializeAIService(apiKey);
   
   const defaultExplanation = language === 'fa' ? "توضیح دقیق در دسترس نیست." : "Detailed explanation unavailable.";
   const defaultProfile: BigFiveProfile = {
-    openness: { score: 50, explanation: defaultExplanation }, conscientiousness: { score: 50, explanation: defaultExplanation },
-    extraversion: { score: 50, explanation: defaultExplanation }, agreeableness: { score: 50, explanation: defaultExplanation },
+    openness: { score: 50, explanation: defaultExplanation }, 
+    conscientiousness: { score: 50, explanation: defaultExplanation },
+    extraversion: { score: 50, explanation: defaultExplanation }, 
+    agreeableness: { score: 50, explanation: defaultExplanation },
     neuroticism: { score: 50, explanation: defaultExplanation },
   };
 
   const prompt = getLocalizedTextAnalysisPrompt(text, language);
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: { responseMimeType: "application/json" }
+    const ai = initializeAIService(apiKey);
+    const model = ai.getGenerativeModel({ 
+      model: "gemini-2.0-flash-exp",
+      generationConfig: {
+        responseMimeType: "application/json"
+      }
     });
-    return parseAndValidateProfile(response.text.trim(), defaultProfile);
+    
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    return parseAndValidateProfile(response.text(), defaultProfile);
   } catch (error) {
     console.error("Error calling AI service (text analysis):", error);
-    if (error instanceof Error && error.message.includes("API key not valid")) throw new Error("error.invalidApiKey");
+    if (error instanceof Error) {
+      if (error.message.includes("API key not valid") || error.message.includes("API_KEY_INVALID")) {
+        throw new Error("error.invalidApiKey");
+      }
+    }
     return defaultProfile;
   }
 };
